@@ -42,7 +42,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton, WebAppInfo
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -1247,7 +1247,7 @@ async def webvnc_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Create inline button to open in browser
         kb = [
-            [InlineKeyboardButton("🖥️ Open Desktop in Browser", url=web_url)],
+            [InlineKeyboardButton("🖥️ Open Desktop in Browser", web_app=WebAppInfo(url=web_url))],
         ]
 
         await status_msg.edit_text(
@@ -2349,7 +2349,7 @@ async def webpanel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "System monitor, Sound, Network, File browser, and more!\n\n"
                 "📌 `/webpanel stop` - Stop the web panel")
         kb = [
-            [InlineKeyboardButton("🌐 Open Web Panel", url=web_url)],
+            [InlineKeyboardButton("🌐 Open Web Panel", web_app=WebAppInfo(url=web_url))],
             [InlineKeyboardButton("⏹ Stop Web Panel", callback_data="cmd_webpanel_stop"),
              InlineKeyboardButton("« Back", callback_data="menu_main")],
         ]
