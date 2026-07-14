@@ -954,8 +954,8 @@ async def lock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await run_shell("dm-tool lock 2>/dev/null")
                 return
             await status_msg.edit_text("🔒 *Screen Locked!* 🔒\n━━━━━━━━━━━━━━━━\nScreen is now locked with i3lock.\n\n🔓 *To unlock:* Tap the *🔓 Unlock* button", parse_mode="Markdown")
-    except Exception as e:
-        await status_msg.edit_text(f"❌ Failed to lock: {e}")
+        except Exception as e:
+            await status_msg.edit_text(f"❌ Failed to lock: {e}")
 
 
 async def lock_unlock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
