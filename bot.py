@@ -115,6 +115,12 @@ from utils import (
     COMMAND_HISTORY_FILE,
     VNC_PASSWORD_FILE,
     PHONE_NUMBERS_FILE,
+    MACHINES,
+    get_current_machine,
+    set_current_machine,
+    get_machine_config,
+    get_machine_data_dir,
+    get_machine_download_dir,
     logger,
     is_authorized,
     escape_md,
@@ -171,8 +177,14 @@ RELAY_BASE_URL = f"http://localhost:{RELAY_PORT}/agent"
 async def relay_command(cmd_type: str, args: str = "", poll_timeout: int = 5) -> dict:
     """
     Send a command to the local VM desktop agent and wait for the result.
+    Only used when running on Render (needs local_agent.py on Kali VM).
     Returns dict with keys: output, error, has_file, cmd_id
+    When running locally, immediately returns __NO_RELAY__ so handlers
+    fall back to direct local execution.
     """
+    # If not on Render, skip relay and run locally
+    if os.environ.get("RENDER", "").lower() != "true":
+        return {"error": "__NO_RELAY__", "output": "__NO_RELAY__", "has_file": False}
     async with httpx.AsyncClient(timeout=10) as client:
         try:
             # Step 1: Queue the command
@@ -215,9 +227,145 @@ async def relay_command(cmd_type: str, args: str = "", poll_timeout: int = 5) ->
 
         except httpx.ConnectError:
             # Relay server not running — likely running locally
-            return {"error": None, "output": "__NO_RELAY__", "has_file": False}
+            return {"error": "__NO_RELAY__", "output": "__NO_RELAY__", "has_file": False}
         except Exception as e:
-            return {"error": str(e), "output": "", "has_file": False}
+            return {"error": str(e), "output": "", "has_file": False}# ============ INTERACTIVE TERMINAL MODE ============
+
+class ShellSession:
+    """Persistent shell session with current working directory tracking."""
+    
+    def __init__(self):
+        self.cwd = os.path.expanduser("~")
+    
+    async def execute(self, command: str) -> str:
+        """Execute a command in this session's CWD and return output."""
+        try:
+            result = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: subprocess.run(
+                        command,
+                        shell=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=55,
+                        cwd=self.cwd,
+                    )
+                ),
+                timeout=60
+            )
+            output = (result.stdout or "") + (result.stderr or "")
+            # Track directory changes from cd commands
+            if command.strip().startswith("cd "):
+                parts = command.strip().split(None, 1)
+                if len(parts) > 1:
+                    target = os.path.expanduser(parts[1])
+                    new_cwd = os.path.abspath(
+                        os.path.join(self.cwd, target) if not target.startswith("/") else target
+                    )
+                    if os.path.isdir(new_cwd):
+                        self.cwd = new_cwd
+                else:
+                    # Just "cd" with no args goes home
+                    self.cwd = os.path.expanduser("~")
+            return output if output else "(no output)"
+        except asyncio.TimeoutError:
+            return "Command timed out after 60s"
+        except Exception as e:
+            return f"Error: {e}"
+
+# Active terminal sessions: chat_id -> ShellSession
+SHELL_SESSIONS: dict[int, ShellSession] = {}
+
+
+class TerminalFilter(filters.MessageFilter):
+    """Only match messages when the chat has an active terminal session."""
+    def filter(self, message):
+        return message.chat.id in SHELL_SESSIONS
+
+
+TERMINAL_FILTER = TerminalFilter()
+
+
+async def terminal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle text messages when in interactive terminal mode."""
+    chat_id = update.effective_chat.id
+    if chat_id not in SHELL_SESSIONS:
+        return  # Not in terminal mode
+    
+    if not is_authorized(update.effective_user.id):
+        return
+    
+    text = update.message.text.strip()
+    
+    # Check for quit command
+    if text == "/terminal_quit":
+        del SHELL_SESSIONS[chat_id]
+        await update.effective_message.reply_text(
+            "💻 *Terminal mode ended.*",
+            parse_mode="Markdown"
+        )
+        return
+    
+    session = SHELL_SESSIONS[chat_id]
+    output = await session.execute(text)
+    
+    if len(output) > 3900:
+        output = output[:3900] + "\n\n...(truncated)"
+    
+    await update.effective_message.reply_text(
+        f"📁 `{session.cwd}`\n```\n{output}```",
+        parse_mode="Markdown"
+    )
+
+
+async def shell_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Enter interactive terminal mode or execute a single command."""
+    if not is_authorized(update.effective_user.id):
+        await update.effective_message.reply_text("⛔ Unauthorized.")
+        return
+    
+    chat_id = update.effective_chat.id
+    
+    # If args provided, execute once (backward compat)
+    if context.args:
+        command = " ".join(context.args)
+        session = ShellSession()
+        output = await session.execute(command)
+        if len(output) > 3900:
+            output = output[:3900] + "\n\n...(truncated)"
+        await update.effective_message.reply_text(
+            f"✅ *Done*\n```\n{output}```",
+            parse_mode="Markdown"
+        )
+        return
+    
+    # No args → enter terminal mode
+    SHELL_SESSIONS[chat_id] = ShellSession()
+    await update.effective_message.reply_text(
+        "💻 *Terminal mode started!*\n\n"
+        "Send any command and I'll execute it in real time.\n"
+        "Use `/terminal_quit` to exit terminal mode.\n\n"
+        f"📁 `{SHELL_SESSIONS[chat_id].cwd}`",
+        parse_mode="Markdown"
+    )
+
+
+async def terminal_quit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Exit interactive terminal mode."""
+    chat_id = update.effective_chat.id
+    if chat_id in SHELL_SESSIONS:
+        del SHELL_SESSIONS[chat_id]
+        await update.effective_message.reply_text(
+            "💻 *Terminal mode ended.*",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.effective_message.reply_text(
+            "💻 Not in terminal mode.",
+            parse_mode="Markdown"
+        )
+
 
 # ============ SETUP ============
 
@@ -240,31 +388,30 @@ async def relay_command(cmd_type: str, args: str = "", poll_timeout: int = 5) ->
 
 
 
-# ============ REPLY KEYBOARD (Buttons Below Chat) ============
+# ============ REPLY KEYBOARD (Buttons Below Chat) ============ 
 
 def build_reply_keyboard():
-    """Clean 10-button keyboard for remote control."""
+    """Simplified keyboard with core remote control buttons."""
     keyboard = [
         ["📸 Screenshot", "🔒 Lock/Unlock"],
-        ["🔊 Vol Up", "🔊 Vol Down", "🔇 Mute"],
-        ["💻 Shell", "📊 System Info"],
-        ["📋 Processes", "📊 Dashboard"],
-        ["📖 Help"],
+        ["💻 Shell", "📋 Processes"],
+        ["🖥️ Machine", "📖 Help"],
+        ["📷 Camera"],
+        ["🎬 Record Screen", "⏹️ Stop Record"],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-# Map button text to command handler (10 essential commands)
+# Map button text to command handler
 BUTTON_COMMANDS = {
     "📸 Screenshot": "screenshot",
     "🔒 Lock/Unlock": "lock_unlock",
-    "🔊 Vol Up": "sound up",
-    "🔊 Vol Down": "sound down",
-    "🔇 Mute": "sound mute",
     "💻 Shell": "shell",
-    "📊 System Info": "sysinfo",
     "📋 Processes": "ps",
+    "🖥️ Machine": "machine",
     "📖 Help": "help",
-    "📊 Dashboard": "dashboard",
+    "📷 Camera": "camera",
+    "🎬 Record Screen": "record",
+    "⏹️ Stop Record": "stop_record",
 }
 
 # ============ COMMAND HANDLERS ============
@@ -333,7 +480,7 @@ async def button_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             "📥 *Download a File to the VM*\n\n"
             "Just send me a file or photo in this chat\n"
             "and I'll save it to the VM!\n\n"
-            "📁 Saved to: `/home/osboxes/Downloads/guid_erbot/`\n\n"
+            f"📁 Saved to: `{get_machine_config()['download_dir']}/`\n\n"
             "💡 You can also reply to a message with `/upload <path>`\n"
             "to send files FROM the VM TO Telegram.",
             parse_mode="Markdown"
@@ -341,6 +488,7 @@ async def button_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     # Map command name to handler function
     cmd_map = {
+        "machine": machine_command,
         "term": open_terminal,
         "firefox": open_firefox,
         "screenshot": screenshot_command,
@@ -500,36 +648,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.effective_message.reply_text(help_text, parse_mode="Markdown", reply_markup=reply_markup)
 
-async def shell_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Execute a shell command."""
-    if not is_authorized(update.effective_user.id):
-        await update.effective_message.reply_text("⛔ Unauthorized. You are not allowed to control this machine.")
-        return
-
-    if not context.args:
-        await update.effective_message.reply_text(
-            "Usage: `/shell <command>`\n"
-            "Example: `/shell whoami`",
-            parse_mode="Markdown"
-        )
-        return
-
-    command = " ".join(context.args)
-    status_msg = await update.effective_message.reply_text(f"⚡ Executing: `{command[:50]}`...", parse_mode="Markdown")
-
-    try:
-        output = await run_shell(command, timeout=60)
-        add_to_history(command, output[:200])
-
-        if len(output) > 3900:
-            output = output[:3900] + "\n\n...(truncated)"
-
-        await status_msg.edit_text(
-            f"✅ *Command:* `{escape_md(command[:100])}`\n\n```\n{output[:3900]}```",
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        await status_msg.edit_text(f"❌ Error: {e}")
 
 async def screenshot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Take a screenshot of the desktop."""
@@ -553,7 +671,7 @@ async def screenshot_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         for cmd in methods:
             if shutil.which(cmd[0]):
                 try:
-                    subprocess.run(cmd, timeout=10, capture_output=True)
+                    subprocess.run(cmd, timeout=10, capture_output=True, env={**os.environ, "DISPLAY": ":0"})
                     if Path(screenshot_path).exists() and Path(screenshot_path).stat().st_size > 1000:
                         success = True
                         break
@@ -742,8 +860,7 @@ async def download_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Restrict downloads to home directory for safety
-    save_dir = Path("/home/osboxes/Downloads/guid_erbot")
-    save_dir.mkdir(parents=True, exist_ok=True)
+    save_dir = get_machine_download_dir()
 
     await update.effective_message.reply_text("📥 Downloading file...")
 
@@ -1044,14 +1161,15 @@ async def vnc_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # Generate a random password if not exists
-        if not VNC_PASSWORD_FILE.exists():
+        vnc_pass_path = get_machine_data_dir() / "vnc_pass.txt"
+        if not vnc_pass_path.exists():
             passwd = subprocess.run(
                 ["openssl", "rand", "-hex", "4"],
                 capture_output=True, text=True
             ).stdout.strip()
-            VNC_PASSWORD_FILE.write_text(passwd)
+            vnc_pass_path.write_text(passwd)
         else:
-            passwd = VNC_PASSWORD_FILE.read_text().strip()
+            passwd = vnc_pass_path.read_text().strip()
 
         output = await run_shell(
             f"x11vnc -display :0 -forever -shared -rfbauth ~/.vnc/passwd "
@@ -1084,11 +1202,12 @@ async def vnc_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif action == "password":
         new_pass = " ".join(context.args[1:])
+        vnc_pass_path = get_machine_data_dir() / "vnc_pass.txt"
         if new_pass:
-            VNC_PASSWORD_FILE.write_text(new_pass)
+            vnc_pass_path.write_text(new_pass)
             await update.effective_message.reply_text(f"🔐 VNC password changed to: `{new_pass}`", parse_mode="Markdown")
         else:
-            current = VNC_PASSWORD_FILE.read_text().strip() if VNC_PASSWORD_FILE.exists() else "Not set"
+            current = vnc_pass_path.read_text().strip() if vnc_pass_path.exists() else "Not set"
             await update.effective_message.reply_text(f"🔐 Current VNC password: `{current}`", parse_mode="Markdown")
 
     else:
@@ -1153,8 +1272,9 @@ async def webvnc_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Get VNC password from stored file or use default
         vnc_pass = OSBOXES_PASS
-        if VNC_PASSWORD_FILE.exists():
-            vnc_pass = VNC_PASSWORD_FILE.read_text().strip()
+        vnc_pass_path = get_machine_data_dir() / "vnc_pass.txt"
+        if vnc_pass_path.exists():
+            vnc_pass = vnc_pass_path.read_text().strip()
 
         # Create inline button to open in browser
         kb = [
@@ -1308,6 +1428,25 @@ async def build_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     elif data == "cancel_shutdown":
         await query.edit_message_text("✅ Shutdown cancelled.")
+        return
+
+    # ===== MACHINE SWITCHING =====
+    if data.startswith("machine_switch_"):
+        new_key = data.replace("machine_switch_", "")
+        if set_current_machine(new_key):
+            new_cfg = get_machine_config(new_key)
+            await query.edit_message_text(
+                f"✅ *Switched to {new_cfg['name']}*\n"
+                f"📁 Home: `{new_cfg['home']}`\n"
+                f"👤 User: `{new_cfg['user']}`\n\n"
+                f"All commands will now use this machine's paths.",
+                parse_mode="Markdown"
+            )
+        else:
+            await query.edit_message_text(f"❌ Unknown machine: `{new_key}`", parse_mode="Markdown")
+        await asyncio.sleep(1)
+        # Show updated machine menu
+        await machine_command(update, context)
         return
 
     # ===== MAIN MENU =====
@@ -1991,11 +2130,43 @@ async def build_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(kb)
         )
+        return# ============ MACHINE SELECTION ============
+
+async def machine_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show current machine and allow switching between kal (Kali) and ubuntu (Ubuntu)."""
+    if not is_authorized(update.effective_user.id):
+        await update.effective_message.reply_text("⛔ Unauthorized.")
         return
 
-# ============ NEW COMMAND HANDLERS ============
+    is_callback = update.callback_query is not None
+    current = get_current_machine()
+    cfg = get_machine_config()
 
-# ============ PHONE NUMBER COMMANDS ============
+    text = (
+        f"🖥️ *Machine Selection*\n"
+        f"━━━━━━━━━━━━━━━━━━\n\n"
+        f"*Active:* **{cfg['name']}** (`{current}`)\n"
+        f"*Home:* `{cfg['home']}`\n"
+        f"*Data:* `{cfg['data_dir']}`\n"
+        f"*User:* `{cfg['user']}`\n\n"
+        f"Select a machine below:"
+    )
+
+    kb = []
+    for key, m in MACHINES.items():
+        is_active = key == current
+        label = f"{'✅ ' if is_active else ''}{m['name']} ({key})"
+        kb.append([InlineKeyboardButton(label, callback_data=f"machine_switch_{key}")])
+    kb.append([InlineKeyboardButton("« Back to Menu", callback_data="menu_main")])
+
+    reply_markup = InlineKeyboardMarkup(kb)
+    if is_callback:
+        await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+    else:
+        await update.effective_message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+
+
+# ============ PHONE NUMBER COMMANDS ============ 
 
 async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle incoming contact sharing (phone number)."""
@@ -2648,9 +2819,9 @@ async def record_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     out_path = f"/home/osboxes/Videos/screen_{int(time.time())}.mp4"
     subprocess.Popen([
-        "ffmpeg", "-y", "-f", "x11grab", "-s", "1920x1080", "-i", ":0.0",
+        "ffmpeg", "-y", "-f", "x11grab", "-i", ":0.0",
         "-c:v", "libx264", "-preset", "fast", "-crf", "23", out_path
-    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env={**os.environ, "DISPLAY": ":0"})
     await asyncio.sleep(0.5)
     await update.effective_message.reply_text(
         f"🎬 *Recording started!*\n"
@@ -3295,6 +3466,10 @@ def main():
     app.add_handler(CommandHandler("gpg", gpg_command))
 
     # Button text handler (for reply keyboard taps below chat)
+    # Terminal mode: catch messages BEFORE button handler
+    app.add_handler(CommandHandler("terminal_quit", terminal_quit_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & TERMINAL_FILTER, terminal_handler))
+
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_text_handler))
 
     # Contact handler (for phone number sharing)
@@ -3317,21 +3492,35 @@ def main():
     print(f"📱 Bot: https://t.me/guid_erbot")
     print(f"🔐 Authorized User IDs: {ADMIN_IDS}")
 
-    # Start healthcheck server (for Render port detection + UptimeRobot)
-    try:
-        from healthcheck import app as health_app
-        health_port = int(os.environ.get("PORT", 8080))
-        health_thread = threading.Thread(
-            target=health_app.run,
-            kwargs={"host": "0.0.0.0", "port": health_port, "debug": False, "use_reloader": False},
-            daemon=True
-        )
-        health_thread.start()
-        logger.info(f"❤️  Healthcheck server started on port {health_port}")
-    except Exception as e:
-        logger.warning(f"⚠️  Could not start healthcheck server: {e}")
+    # Start healthcheck server only on Render (port detection + UptimeRobot)
+    if os.environ.get("RENDER", "").lower() == "true":
+        try:
+            from healthcheck import app as health_app
+            health_port = int(os.environ.get("PORT", 8080))
+            health_thread = threading.Thread(
+                target=health_app.run,
+                kwargs={"host": "0.0.0.0", "port": health_port, "debug": False, "use_reloader": False},
+                daemon=True
+            )
+            health_thread.start()
+            logger.info(f"❤️  Healthcheck server started on port {health_port}")
+        except Exception as e:
+            logger.warning(f"⚠️  Could not start healthcheck server: {e}")
 
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    try:
+        app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    except Exception as e:
+        logger.error(f"Bot polling crashed: {e}", exc_info=True)
+        logger.info("Restarting bot in 3 seconds...")
+        import time
+        time.sleep(3)
+        main()
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        logger.error(f"Bot main crashed: {e}", exc_info=True)
+        import time
+        time.sleep(3)
+        main()

@@ -19,7 +19,7 @@ from pathlib import Path
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from utils import is_authorized, run_shell, escape_md, reply_long, DATA_DIR
+from utils import is_authorized, run_shell, escape_md, reply_long, get_machine_config, get_machine_data_dir, get_machine_download_dir
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,8 @@ async def open_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.effective_message.reply_text(f"🎵 Opened `{name}` ✓", parse_mode="Markdown")
             return
     # Fallback: open music folder
-    subprocess.Popen(["xdg-open", "/home/osboxes/Music"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    cfg = get_machine_config()
+    subprocess.Popen(["xdg-open", f"{cfg['home']}/Music"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     await update.effective_message.reply_text("🎵 Opened Music folder", parse_mode="Markdown")
 
 async def open_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -114,7 +115,8 @@ async def open_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await open_app("VLC", "vlc"): 
         await update.effective_message.reply_text("🎬 Opened VLC media player ✓", parse_mode="Markdown")
         return
-    subprocess.Popen(["xdg-open", "/home/osboxes/Videos"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    cfg = get_machine_config()
+    subprocess.Popen(["xdg-open", f"{cfg['home']}/Videos"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     await update.effective_message.reply_text("🎬 Opened Videos folder", parse_mode="Markdown")
 
 async def open_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -124,7 +126,8 @@ async def open_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if await open_app(name, cmd):
             await update.effective_message.reply_text(f"🖼️ Opened `{name}` ✓", parse_mode="Markdown")
             return
-    subprocess.Popen(["xdg-open", "/home/osboxes/Pictures"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    cfg = get_machine_config()
+    subprocess.Popen(["xdg-open", f"{cfg['home']}/Pictures"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     await update.effective_message.reply_text("🖼️ Opened Pictures folder", parse_mode="Markdown")
 
 async def open_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -168,19 +171,24 @@ async def open_folder(folder_path, label, emoji):
     await update.effective_message.reply_text(f"{emoji} Opened {label} folder ✓", parse_mode="Markdown")
 
 async def open_home(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await open_folder("/home/osboxes", "Home", "📁")
+    cfg = get_machine_config()
+    await open_folder(f"{cfg['home']}", "Home", "📁")
 
 async def open_downloads(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await open_folder("/home/osboxes/Downloads", "Downloads", "📂")
+    cfg = get_machine_config()
+    await open_folder(f"{cfg['home']}/Downloads", "Downloads", "📂")
 
 async def open_documents(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await open_folder("/home/osboxes/Documents", "Documents", "📄")
+    cfg = get_machine_config()
+    await open_folder(f"{cfg['home']}/Documents", "Documents", "📄")
 
 async def open_screenshots(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await open_folder("/home/osboxes/Pictures", "Screenshots", "🖼️")
+    cfg = get_machine_config()
+    await open_folder(f"{cfg['home']}/Pictures", "Screenshots", "🖼️")
 
 async def open_videos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await open_folder("/home/osboxes/Videos", "Videos", "🎬")
+    cfg = get_machine_config()
+    await open_folder(f"{cfg['home']}/Videos", "Videos", "🎬")
 
 async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Create a quick backup of important configs."""
@@ -188,11 +196,13 @@ async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("⛔ Unauthorized.")
         return
     msg = await update.effective_message.reply_text("💾 Creating backup...")
-    backup_dir = Path(f"/home/osboxes/backups/backup_{int(time.time())}")
+    cfg = get_machine_config()
+    backup_dir = Path(f"{cfg['backup_dir']}/backup_{int(time.time())}")
     backup_dir.mkdir(parents=True, exist_ok=True)
-    await run_shell(f"cp -r /home/osboxes/.ssh {backup_dir}/ 2>/dev/null; "
-                    f"cp -r /home/osboxes/.config {backup_dir}/ 2>/dev/null; "
-                    f"cp /home/osboxes/.bashrc {backup_dir}/ 2>/dev/null; "
+    home = cfg['home']
+    await run_shell(f"cp -r {home}/.ssh {backup_dir}/ 2>/dev/null; "
+                    f"cp -r {home}/.config {backup_dir}/ 2>/dev/null; "
+                    f"cp {home}/.bashrc {backup_dir}/ 2>/dev/null; "
                     f"echo done")
     size = await run_shell(f"du -sh {backup_dir} | awk '{{print \\$1}}'")
     await msg.edit_text(
@@ -372,7 +382,9 @@ async def git_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("❌ Git not installed. Run: `sudo apt install git`", parse_mode="Markdown")
         return
     # Check common directories
-    dirs = ["/home/osboxes", "/home/osboxes/guid_erbot", "/home/osboxes/Documents", "/home/osboxes/projects"]
+    cfg = get_machine_config()
+    home = cfg['home']
+    dirs = [home, f"{home}/guid_erbot", f"{home}/Documents", f"{home}/projects"]
     results = []
     for d in dirs:
         path = Path(d)
@@ -392,7 +404,9 @@ async def build_project(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("⛔ Unauthorized.")
         return
     # Detect project type and build
-    dirs = ["/home/osboxes", "/home/osboxes/guid_erbot"]
+    cfg = get_machine_config()
+    home = cfg['home']
+    dirs = [home, f"{home}/guid_erbot"]
     built = False
     for d in dirs:
         path = Path(d)
@@ -413,7 +427,9 @@ async def run_tests(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         await update.effective_message.reply_text("⛔ Unauthorized.")
         return
-    dirs = ["/home/osboxes", "/home/osboxes/guid_erbot"]
+    cfg = get_machine_config()
+    home = cfg['home']
+    dirs = [home, f"{home}/guid_erbot"]
     tested = False
     for d in dirs:
         path = Path(d)
@@ -424,7 +440,8 @@ async def run_tests(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 tested = True
                 break
     if not tested:
-        result = await run_shell("cd /home/osboxes/guid_erbot && python3 -m pytest 2>&1 | tail -20 || python3 -m unittest discover 2>&1 | tail -20 || echo 'No tests found'", timeout=30)
+        cfg = get_machine_config()
+        result = await run_shell(f"cd {cfg['home']}/guid_erbot && python3 -m pytest 2>&1 | tail -20 || python3 -m unittest discover 2>&1 | tail -20 || echo 'No tests found'", timeout=30)
         await update.effective_message.reply_text(f"🧪 *Test Results*\\n```\\n{escape_md(result.strip()[:1500])}```", parse_mode="Markdown")
 
 # ============ FUN ============
@@ -647,7 +664,7 @@ async def notes_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         await update.effective_message.reply_text("⛔ Unauthorized.")
         return
-    notes_file = DATA_DIR / "quick_notes.json"
+    notes_file = get_machine_data_dir() / "quick_notes.json"
     if not context.args:
         # Show notes
         if notes_file.exists():

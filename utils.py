@@ -27,9 +27,72 @@ ADMIN_IDS = [int(x.strip()) for x in _ADMIN_IDS_ENV.split(",") if x.strip()]
 OSBOXES_USER = "osboxes"
 OSBOXES_PASS = "osboxes.org"
 
-DATA_DIR = Path("/home/osboxes/guid_erbot/data")
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+# ============ MACHINE CONFIG ============
+# Supports: 'kal' (Kali Linux) and 'ubuntu' (Ubuntu)
+MACHINES = {
+    "kal": {
+        "name": "Kali Linux",
+        "home": "/home/osboxes",
+        "data_dir": "/home/osboxes/guid_erbot/data",
+        "download_dir": "/home/osboxes/Downloads/guid_erbot",
+        "backup_dir": "/home/osboxes/backups",
+        "user": "osboxes",
+        "pass": "osboxes.org",
+    },
+    "ubuntu": {
+        "name": "Ubuntu",
+        "home": "/home/ubuntu",
+        "data_dir": "/home/ubuntu/guid_erbot/data",
+        "download_dir": "/home/ubuntu/Downloads/guid_erbot",
+        "backup_dir": "/home/ubuntu/backups",
+        "user": "ubuntu",
+        "pass": "ubuntu",
+    },
+}
 
+_MACHINE_CACHE_FILE = Path(__file__).parent / ".machine"
+
+def get_current_machine():
+    """Return current machine key ('kal' or 'ubuntu')."""
+    if _MACHINE_CACHE_FILE.exists():
+        return _MACHINE_CACHE_FILE.read_text().strip()
+    return "kal"
+
+def set_current_machine(key):
+    """Set current machine. Returns True if valid."""
+    if key not in MACHINES:
+        return False
+    _MACHINE_CACHE_FILE.write_text(key)
+    return True
+
+def get_machine_config(key=None):
+    """Get a machine config dict. If key is None, returns current machine."""
+    if key is None:
+        key = get_current_machine()
+    return MACHINES.get(key, MACHINES["kal"])
+
+def machine_path(*parts):
+    """Resolve a path relative to the current machine's home directory."""
+    cfg = get_machine_config()
+    if parts and parts[0].startswith("/home/osboxes"):
+        return Path(str(parts[0]).replace("/home/osboxes", cfg["home"], 1))
+    return Path(cfg["home"], *parts)
+
+def get_machine_data_dir():
+    """Get and ensure the data directory exists for the current machine."""
+    cfg = get_machine_config()
+    d = Path(cfg["data_dir"])
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+def get_machine_download_dir():
+    """Get and ensure the download directory exists for the current machine."""
+    cfg = get_machine_config()
+    d = Path(cfg["download_dir"])
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+DATA_DIR = get_machine_data_dir()
 COMMAND_HISTORY_FILE = DATA_DIR / "cmd_history.json"
 VNC_PASSWORD_FILE = DATA_DIR / "vnc_pass.txt"
 PHONE_NUMBERS_FILE = DATA_DIR / "phone_numbers.json"
@@ -149,11 +212,16 @@ def format_bytes(bytes_val):
 
 # ============ COMMAND HISTORY ============
 
+def _get_history_file():
+    """Get command history file path for the current machine."""
+    return get_machine_data_dir() / "cmd_history.json"
+
 def load_command_history():
     """Load command history from file."""
-    if COMMAND_HISTORY_FILE.exists():
+    path = _get_history_file()
+    if path.exists():
         try:
-            with open(COMMAND_HISTORY_FILE) as f:
+            with open(path) as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError):
             return []
@@ -161,8 +229,9 @@ def load_command_history():
 
 def save_command_history(history):
     """Save command history to file."""
+    path = _get_history_file()
     try:
-        with open(COMMAND_HISTORY_FILE, "w") as f:
+        with open(path, "w") as f:
             json.dump(history[-50:], f)
     except OSError as e:
         logger.error(f"Failed to save command history: {e}")
@@ -179,11 +248,16 @@ def add_to_history(cmd, output_preview):
 
 # ============ PHONE NUMBER STORAGE ============
 
+def _get_phone_file():
+    """Get phone numbers file path for the current machine."""
+    return get_machine_data_dir() / "phone_numbers.json"
+
 def load_phone_numbers():
     """Load saved phone numbers from file."""
-    if PHONE_NUMBERS_FILE.exists():
+    path = _get_phone_file()
+    if path.exists():
         try:
-            with open(PHONE_NUMBERS_FILE) as f:
+            with open(path) as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError):
             return {}
@@ -197,8 +271,9 @@ def save_phone_number(user_id, phone, first_name=""):
         "first_name": first_name,
         "saved_at": datetime.now().isoformat(),
     }
+    path = _get_phone_file()
     try:
-        with open(PHONE_NUMBERS_FILE, "w") as f:
+        with open(path, "w") as f:
             json.dump(numbers, f, indent=2)
     except OSError as e:
         logger.error(f"Failed to save phone number: {e}")
