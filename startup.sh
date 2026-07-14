@@ -22,12 +22,7 @@ echo "🤖 Starting guid_erbot telegram bot..."
 echo "📱 Bot: https://t.me/guid_erbot"
 echo "🔐 Admin: $ADMIN_IDS"
 
-# Start the healthcheck server in background (for Uptime Runner / keep-alive)
-# Auto-restarts if it crashes. Prevents Render free tier from sleeping the bot.
-while true; do
-    python3 healthcheck.py
-    sleep 2
-done &
-
 # Start the main Telegram bot
+# Healthcheck server is started internally by bot.py (on a daemon thread)
+echo "❤️  Healthcheck server will run inside bot.py (threaded)"
 exec python3 bot.py

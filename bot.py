@@ -36,6 +36,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import json
 from datetime import datetime
@@ -3400,6 +3401,20 @@ def main():
     print("🤖 guid_erbot is running! Press Ctrl+C to stop.")
     print(f"📱 Bot: https://t.me/guid_erbot")
     print(f"🔐 Authorized User IDs: {ADMIN_IDS}")
+
+    # Start healthcheck server (for Render port detection + UptimeRobot)
+    try:
+        from healthcheck import app as health_app
+        health_port = int(os.environ.get("PORT", 8080))
+        health_thread = threading.Thread(
+            target=health_app.run,
+            kwargs={"host": "0.0.0.0", "port": health_port, "debug": False, "use_reloader": False},
+            daemon=True
+        )
+        health_thread.start()
+        logger.info(f"❤️  Healthcheck server started on port {health_port}")
+    except Exception as e:
+        logger.warning(f"⚠️  Could not start healthcheck server: {e}")
 
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
