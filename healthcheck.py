@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
-from flask import Flask, jsonify
+from flask import Flask, jsonify, render_template_string, render_template_string
 
 app = Flask(__name__)
 
@@ -205,6 +205,284 @@ def get_bot_stats():
     return stats
 
 
+
+DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>guid_erbot - Diagnostics</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0f0f1a;
+    color: #e0e0e0;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  .container { max-width: 1200px; margin: 0 auto; }
+  header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 20px 0; border-bottom: 1px solid #2a2a3e; margin-bottom: 24px;
+    flex-wrap: wrap; gap: 12px;
+  }
+  header h1 {
+    font-size: 24px; font-weight: 700;
+    background: linear-gradient(135deg, #a29bfe, #6c5ce7);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .status-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600;
+  }
+  .status-badge.ok { background: rgba(0, 255, 136, 0.15); color: #00ff88; }
+  .status-badge.error { background: rgba(255, 107, 107, 0.15); color: #ff6b6b; }
+  .status-badge.warn { background: rgba(255, 217, 61, 0.15); color: #ffd93d; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.green { background: #00ff88; box-shadow: 0 0 8px #00ff8866; }
+  .dot.red { background: #ff6b6b; box-shadow: 0 0 8px #ff6b6b66; }
+  .dot.yellow { background: #ffd93d; box-shadow: 0 0 8px #ffd93d66; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+  .card {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border: 1px solid #2a2a3e;
+    border-radius: 16px; padding: 20px;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+  .card-title {
+    font-size: 13px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.5px; color: #8888aa; margin-bottom: 14px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card-title .emoji { font-size: 16px; }
+  .stat-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 14px; border-bottom: 1px solid #1f1f35; }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-label { color: #8888aa; }
+  .stat-value { color: #e0e0e0; font-weight: 500; font-family: 'SF Mono', 'Fira Code', monospace; }
+  .stat-value.green { color: #00ff88; }
+  .stat-value.red { color: #ff6b6b; }
+  .stat-value.yellow { color: #ffd93d; }
+  .bar-container { background: #1f1f35; border-radius: 8px; height: 8px; overflow: hidden; margin: 4px 0 8px; }
+  .bar-fill {
+    height: 100%; border-radius: 8px;
+    transition: width 0.5s ease;
+    background: linear-gradient(90deg, #00ff88, #6c5ce7);
+  }
+  .bar-fill.warn { background: linear-gradient(90deg, #ffd93d, #ff9f43); }
+  .bar-fill.danger { background: linear-gradient(90deg, #ff6b6b, #ee5a24); }
+  .network-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .network-table th { text-align: left; color: #8888aa; font-weight: 600; padding: 6px 4px; border-bottom: 1px solid #2a2a3e; }
+  .network-table td { padding: 6px 4px; border-bottom: 1px solid #1f1f35; font-family: 'SF Mono', monospace; }
+  .iface-up { color: #00ff88; }
+  .iface-down { color: #ff6b6b; }
+  .disk-list { list-style: none; }
+  .disk-item { padding: 10px 0; border-bottom: 1px solid #1f1f35; }
+  .disk-item:last-child { border-bottom: none; }
+  .disk-mount { font-weight: 600; font-size: 13px; color: #a29bfe; }
+  .disk-details { display: flex; gap: 16px; font-size: 12px; color: #8888aa; margin: 4px 0; }
+  .env-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .env-item { background: #0f0f1a; padding: 8px 12px; border-radius: 8px; font-size: 12px; }
+  .env-key { color: #8888aa; }
+  .env-val { color: #a29bfe; font-family: 'SF Mono', monospace; display: block; margin-top: 2px; }
+  .refresh-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 16px; background: #1a1a2e; border-radius: 10px;
+    font-size: 12px; color: #8888aa; margin-bottom: 16px;
+  }
+  .refresh-spinner { width: 14px; height: 14px; border: 2px solid #2a2a3e; border-top-color: #6c5ce7; border-radius: 50%; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  footer { text-align: center; padding: 30px 0; font-size: 12px; color: #555; }
+  .mt-2 { margin-top: 8px; }
+  @media (max-width: 600px) {
+    .grid { grid-template-columns: 1fr; }
+    .env-grid { grid-template-columns: 1fr; }
+    header h1 { font-size: 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>🖥️ guid_erbot · Diagnostics</h1>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <span class="status-badge" id="statusBadge">
+        <span class="dot" id="statusDot"></span>
+        <span id="statusText">Loading...</span>
+      </span>
+      <span style="font-size:13px;color:#8888aa;" id="timestamp"></span>
+    </div>
+  </header>
+
+  <div class="refresh-bar">
+    <div class="refresh-spinner"></div>
+    <span>Auto-refreshes every 30s · </span>
+    <a href="/debug" style="color:#6c5ce7;text-decoration:none;font-weight:500;">View Raw JSON</a>
+  </div>
+
+  <div class="grid" id="dashboardGrid"></div>
+  <footer>guid_erbot · Render Diagnostics</footer>
+</div>
+
+<script>
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function pctColor(pct) {
+  const n = parseFloat(pct);
+  if (isNaN(n)) return '';
+  if (n >= 80) return 'danger';
+  if (n >= 50) return 'warn';
+  return '';
+}
+
+function renderDisk(disks) {
+  if (!disks || disks.length === 0) return '<div style="color:#888;">No disk data</div>';
+  return disks.map(d => {
+    const pct = parseInt(d.use_pct);
+    const cls = pctColor(pct);
+    return `<div class="disk-item">
+      <div class="disk-mount">${d.mount}</div>
+      <div class="disk-details"><span>💾 ${d.size}</span><span>📀 ${d.used}</span><span>🆓 ${d.avail}</span></div>
+      <div class="bar-container"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div>
+      <div style="font-size:12px;color:#8888aa;">${d.use_pct} used</div>
+    </div>`;
+  }).join('');
+}
+
+function renderNetwork(ifaces) {
+  if (!ifaces || ifaces.length === 0) return '<div style="color:#888;">No network data</div>';
+  return `<table class="network-table">
+    <tr><th>Interface</th><th>Status</th><th>Address</th></tr>
+    ${ifaces.map(i => {
+      const cls = i.status === 'UP' ? 'iface-up' : 'iface-down';
+      return `<tr><td>${i.name}</td><td class="${cls}">${i.status}</td><td>${i.addresses || '-'}</td></tr>`;
+    }).join('')}
+  </table>`;
+}
+
+function renderProcesses(procs) {
+  return Object.entries(procs).map(([name, p]) => {
+    const dotClass = p.running ? 'green' : 'red';
+    const statusText = p.running ? 'Running' : 'Stopped';
+    return `<div class="stat-row">
+      <span class="stat-label">${name}</span>
+      <span class="stat-value"><span class="dot ${dotClass}"></span> ${statusText} ${p.pid ? '· PID '+p.pid : ''} ${p.memory ? '· '+p.memory : ''}</span>
+    </div>`;
+  }).join('');
+}
+
+function renderEnv(env) {
+  if (!env) return '<div style="color:#888;">No env data</div>';
+  return `<div class="env-grid">${Object.entries(env).map(([k,v]) => 
+    `<div class="env-item"><span class="env-key">${k}</span><span class="env-val">${v || '-'}</span></div>`
+  ).join('')}</div>`;
+}
+
+function renderBotStats(stats) {
+  if (!stats) return '<div style="color:#888;">No stats</div>';
+  return Object.entries(stats).map(([k,v]) => {
+    const displayKey = k.replace(/_/g, ' ');
+    return `<div class="stat-row"><span class="stat-label">${displayKey}</span><span class="stat-value">${esc(v) || '-'}</span></div>`;
+  }).join('');
+}
+
+function renderUptime(ut) {
+  if (!ut) return '<div style="color:#888;">No uptime data</div>';
+  return `<div class="stat-row"><span class="stat-label">⏱ Server uptime</span><span class="stat-value green">${ut.server || '-'}</span></div>
+    <div class="stat-row"><span class="stat-label">📊 System load</span><span class="stat-value">${ut.system || '-'}</span></div>`;
+}
+
+function renderPackages(pkgs) {
+  if (!pkgs) return '<div style="color:#888;">No package data</div>';
+  const items = [];
+  if (pkgs.dpkg) items.push(`<div class="stat-row"><span class="stat-label">📦 dpkg</span><span class="stat-value green">${pkgs.dpkg.toLocaleString()} packages</span></div>`);
+  if (pkgs.pip) items.push(`<div class="stat-row"><span class="stat-label">🐍 pip</span><span class="stat-value">${pkgs.pip} packages</span></div>`);
+  return items.join('');
+}
+
+async function loadDashboard() {
+  try {
+    const res = await fetch('/debug');
+    const d = await res.json();
+
+    const dot = document.getElementById('statusDot');
+    const badge = document.getElementById('statusBadge');
+    const stxt = document.getElementById('statusText');
+    const ts = document.getElementById('timestamp');
+
+    if (d.status === 'ok') {
+      dot.className = 'dot green';
+      badge.className = 'status-badge ok';
+      stxt.textContent = 'All Systems OK';
+    } else {
+      dot.className = 'dot red';
+      badge.className = 'status-badge error';
+      stxt.textContent = 'Issues Detected';
+    }
+    ts.textContent = d.timestamp ? new Date(d.timestamp).toLocaleString() : '';
+
+    const grid = document.getElementById('dashboardGrid');
+    grid.innerHTML = `
+      <div class="card">
+        <div class="card-title"><span class="emoji">⚡</span> Status</div>
+        <div class="stat-row"><span class="stat-label">Service</span><span class="stat-value">${d.service}</span></div>
+        <div class="stat-row"><span class="stat-label">Status</span><span class="stat-value green">${d.status}</span></div>
+        ${renderUptime(d.uptime)}
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="emoji">🧠</span> Processes</div>
+        ${d.processes ? renderProcesses(d.processes) : '<div style="color:#888;">No data</div>'}
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="emoji">💾</span> Disk Usage</div>
+        ${renderDisk(d.disk)}
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="emoji">🌐</span> Network Interfaces</div>
+        ${renderNetwork(d.network)}
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="emoji">📦</span> Packages</div>
+        ${renderPackages(d.packages)}
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="emoji">⚙️</span> Environment</div>
+        ${renderEnv(d.environment)}
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="emoji">🤖</span> Bot Stats</div>
+        ${renderBotStats(d.bot_stats)}
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="emoji">🔗</span> Endpoints</div>
+        ${d.endpoints ? Object.entries(d.endpoints).map(([k,v]) => 
+          `<div class="stat-row"><span class="stat-label">${k}</span><span class="stat-value" style="font-size:12px;">${v}</span></div>`
+        ).join('') : '<div style="color:#888;">No data</div>'}
+      </div>
+    `;
+  } catch (e) {
+    document.getElementById('dashboardGrid').innerHTML = 
+      `<div class="card"><div class="card-title">❌ Error</div><div style="color:#ff6b6b;">Failed to load diagnostics: ${e.message}</div></div>`;
+  }
+}
+
+// Initial load
+loadDashboard();
+// Auto-refresh every 30s
+setInterval(loadDashboard, 30000);
+</script>
+</body>
+</html>"""
+
+@app.route("/")
+def dashboard():
+    """Web dashboard showing all diagnostics."""
+    return render_template_string(DASHBOARD_HTML)
+
+@app.route("/dashboard")
+def dashboard_redirect():
+    return dashboard()
+
 @app.route("/health")
 def health():
     """Healthcheck endpoint for UptimeRobot / Kaffeine."""
@@ -270,6 +548,14 @@ def debug():
         },
     }
     return jsonify(info)
+
+
+@app.after_request
+def add_no_cache(resp):
+    """Prevent browsers from caching JSON responses (dashboard refreshes every 30s)."""
+    if resp.content_type and 'application/json' in resp.content_type:
+        resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    return resp
 
 
 if __name__ == "__main__":
