@@ -6,12 +6,13 @@ Common functions used by bot.py and extra_commands.py
 
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 import platform
 import shutil
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from telegram import Update
@@ -35,10 +36,65 @@ PHONE_NUMBERS_FILE = DATA_DIR / "phone_numbers.json"
 
 # ============ LOGGING ============
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
+# Log level: set LOG_LEVEL env var to DEBUG for verbose output, INFO by default
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+_log_level = getattr(logging, LOG_LEVEL, logging.INFO)
+
+# JSON logs on Render (structured for Render Log Explorer), text locally
+_use_json = os.environ.get("JSON_LOGS", "false").lower() in ("true", "1", "yes")
+
+class JsonFormatter(logging.Formatter):
+    """Structured JSON formatter for Render Log Explorer."""
+    def format(self, record):
+        log_entry = {
+            "time": datetime.now(timezone.utc).isoformat(),
+            "level": record.levelname,
+            "name": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info and record.exc_info[0]:
+            log_entry["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_entry)
+
+# --- Configure Root Logger ---
+root_logger = logging.getLogger()
+root_logger.setLevel(_log_level)
+
+# Remove default handlers to avoid duplicate output
+for handler in root_logger.handlers[:]:
+    root_logger.removeHandler(handler)
+
+# 1) Stream handler: JSON on Render, colored text locally
+stream = logging.StreamHandler()
+stream.setLevel(_log_level)
+if _use_json:
+    stream.setFormatter(JsonFormatter())
+else:
+    stream.setFormatter(logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    ))
+root_logger.addHandler(stream)
+
+# 2) Rotating file handler (for local debugging, /tmp on Render is ephemeral)
+try:
+    log_dir = Path("/tmp/guid_erbot")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    file_handler = RotatingFileHandler(
+        str(log_dir / "bot.log"),
+        maxBytes=5 * 1024 * 1024,  # 5 MB
+        backupCount=3,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(_log_level)
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    ))
+    root_logger.addHandler(file_handler)
+    root_logger.info(f"📁 File logging enabled: {log_dir / 'bot.log'} (max 5MB, 3 backups)")
+except (OSError, PermissionError) as e:
+    root_logger.warning(f"⚠️  Could not create file logger: {e}")
+
+# Module logger (used by bot.py and extra_commands.py via imports)
 logger = logging.getLogger(__name__)
 
 # ============ UTILITY ============
