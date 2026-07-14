@@ -613,6 +613,7 @@ HTML = """<!DOCTYPE html>
           <div class="card-header">⏱️ System</div>
           <div class="card-value" id="ov-uptime" style="font-size:1.3em;">—</div>
           <div class="stat-row" style="margin-top:12px;"><span class="label">Hostname</span><span class="value" id="ov-host">—</span></div>
+          <div class="stat-row"><span class="label">IP</span><span class="value" id="ov-ip">—</span></div>
           <div class="stat-row"><span class="label">OS</span><span class="value" id="ov-os">—</span></div>
           <div class="stat-row"><span class="label">Kernel</span><span class="value" id="ov-kernel">—</span></div>
           <div class="stat-row"><span class="label">Processes</span><span class="value" id="ov-procs">—</span></div>
@@ -769,6 +770,21 @@ HTML = """<!DOCTYPE html>
         </div>
       </div>
       <div class="card">
+        <div class="card-header">🔐 VPN</div>
+        <div id="ctrl-vpn-status">Checking...</div>
+        <div class="btn-group">
+          <button class="btn btn-primary btn-sm" onclick="vpnStop()">⏹ Disconnect</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">🧦 SOCKS5 Proxy</div>
+        <div id="ctrl-socks5-status">Checking...</div>
+        <div class="btn-group">
+          <button class="btn btn-primary btn-sm" onclick="socks5('start')">▶ Start</button>
+          <button class="btn btn-red btn-sm" onclick="socks5('stop')">⏹ Stop</button>
+        </div>
+      </div>
+      <div class="card">
         <div class="card-header">🔔 Notification</div>
         <div style="display:flex;gap:8px;">
           <input type="text" id="notif-msg" value="Hello from dashboard!" style="flex:1;padding:10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);">
@@ -828,6 +844,12 @@ async function loadOverview() {
   document.getElementById('ov-disk-bar').style.width = Math.min(parseFloat(d.disk_pct)||0,100)+'%';
   document.getElementById('ov-uptime').textContent = d.uptime||'—';
   document.getElementById('ov-host').textContent = d.hostname||'—';
+  // Load IP from network endpoint
+  api('/api/network').then(n=>{
+    const ifaces = (n.interfaces||'').split('\\n').filter(l=>l.trim());
+    const firstIp = ifaces.length>0 ? ifaces[0].split(/\\s+/)[1]||'—' : '—';
+    document.getElementById('ov-ip').textContent = firstIp;
+  });
   document.getElementById('ov-os').textContent = (d.os||'—').substring(0,40);
   document.getElementById('ov-kernel').textContent = d.kernel||'—';
   document.getElementById('ov-procs').textContent = d.processes||'—';
@@ -890,8 +912,22 @@ function runCommand() {
   const cmd = input.value.trim();
   if(!cmd) return;
   const out = document.getElementById('term-output');
-  out.innerHTML += '<span style="color:#a29bfe;">$</span> <span style="color:#fff;">'+cmd.replace(/</g,'&lt;')+'</span><br>';
-  out.innerHTML += '<span style="color:#888;">⏳ Running...</span><br>';
+  // Echo command
+  const promptSpan = document.createElement('span');
+  promptSpan.style.cssText = 'color:#a29bfe;';
+  promptSpan.textContent = '$ ';
+  const cmdSpan = document.createElement('span');
+  cmdSpan.style.cssText = 'color:#fff;';
+  cmdSpan.textContent = cmd;
+  out.appendChild(promptSpan);
+  out.appendChild(cmdSpan);
+  out.appendChild(document.createElement('br'));
+  // Loading indicator
+  const loadSpan = document.createElement('div');
+  loadSpan.className = 'term-loading';
+  loadSpan.style.cssText = 'color:#888;';
+  loadSpan.textContent = '⏳ Running...';
+  out.appendChild(loadSpan);
   out.scrollTop = out.scrollHeight;
   input.value = '';
   apiPost('/api/shell',{command: cmd}).then(d=>{
@@ -941,6 +977,20 @@ async function vnc(a) {
   toast(d.ok?(a==='start'?'▶ VNC started':'⏹ VNC stopped'):'❌ '+(d.error||'Failed'),!d.ok);
   loadStatus();
 }
+async function vpnStop() {
+  const d=await apiPost('/api/vpn',{action:'stop'});
+  toast(d.ok?'⏹ VPN disconnected':'❌ Failed',!d.ok);
+  loadStatus();
+}
+async function socks5(a) {
+  const d=await apiPost('/api/socks5',{action:a});
+  toast(d.ok?(a==='start'?'▶ SOCKS5 started on :1080':'⏹ SOCKS5 stopped'):'❌ Failed',!d.ok);
+  loadSocks5();
+}
+async function loadSocks5() {
+  const s=await api('/api/socks5');
+  document.getElementById('ctrl-socks5-status').textContent = s.running?'✅ Running on :1080':'❌ Stopped';
+}
 
 async function loadStatus() {
   const s = await api('/api/status');
@@ -948,6 +998,11 @@ async function loadStatus() {
   document.getElementById('ctrl-lock-badge').className = 'badge '+(s.locked?'badge-red':'badge-green');
   document.getElementById('ctrl-lock-badge').textContent = s.locked?'Locked':'Active';
   document.getElementById('ctrl-vnc-status').textContent = s.vnc_running?'✅ Running':'❌ Stopped';
+  // Load VPN status
+  const v = await api('/api/vpn');
+  document.getElementById('ctrl-vpn-status').textContent = v.running?'✅ Connected ('+(v.interface||'')+')':'❌ Disconnected';
+  // Load SOCKS5 status
+  loadSocks5();
 }
 async function loadSound() {
   const s = await api('/api/sound');
@@ -971,6 +1026,45 @@ function init() {
 @app.route("/")
 def index():
     return render_template_string(HTML)
+
+@app.route("/api/vpn", methods=["GET"])
+@require_auth
+def api_vpn_dash():
+    running = run_shell("pgrep -f 'wg-quick|openvpn' 2>/dev/null | grep -v grep || echo 'no'")
+    interface = run_shell("ip addr show tun0 2>/dev/null | grep inet | awk '{print $2}' || echo 'No VPN interface'")
+    return jsonify({"running": "no" not in running, "interface": interface})
+
+@app.route("/api/vpn", methods=["POST"])
+@require_auth
+def api_vpn_ctrl():
+    action = (request.json or {}).get("action", "status")
+    if action == "stop":
+        run_shell("pkill -f 'wg-quick|openvpn' 2>/dev/null; ip link delete tun0 2>/dev/null; echo done")
+        return jsonify({"ok": True})
+    elif action == "status":
+        running = run_shell("pgrep -f 'wg-quick|openvpn' 2>/dev/null | grep -v grep || echo 'no'")
+        return jsonify({"running": "no" not in running})
+    return jsonify({"ok": False})
+
+@app.route("/api/socks5", methods=["GET"])
+@require_auth
+def api_socks5_dash():
+    running = run_shell("pgrep -x microsocks 2>/dev/null || echo 'no'")
+    port = run_shell("ss -tlnp | grep 1080 || echo 'Not listening'")
+    return jsonify({"running": "no" not in running, "port": port})
+
+@app.route("/api/socks5", methods=["POST"])
+@require_auth
+def api_socks5_ctrl():
+    action = (request.json or {}).get("action", "status")
+    if action == "start":
+        subprocess.Popen(["microsocks","-i","0.0.0.0","-p","1080"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(1)
+        return jsonify({"ok": True})
+    elif action == "stop":
+        run_shell("pkill -x microsocks 2>/dev/null")
+        return jsonify({"ok": True})
+    return jsonify({"ok": False})
 
 @app.route("/api/<path:fallback>")
 def fallback_api():
