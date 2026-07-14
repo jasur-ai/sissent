@@ -28,6 +28,11 @@ services:
         value: "3.11"
       - key: RENDER
         value: "true"
+      - key: LOG_LEVEL
+        value: "INFO"
+      - key: JSON_LOGS
+        value: "true"
+        comment: "Set to true for structured JSON logs in Render Log Explorer"
 
   # ===================== HEALTH CHECK (Web Service - for Uptime Runner) =====================
   # This lightweight HTTP server keeps the bot alive on Render's free tier.
