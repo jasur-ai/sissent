@@ -580,6 +580,24 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  `/webvnc` — Desktop in browser\n"
         "  `/upload <path>` — Send file from VM\n"
         "  `/sound get` — Volume status\n"
+        "  `/speedtest` — Network speed test\n"
+        "  `/docker` — Docker containers status\n"
+        "  `/packages` — Package manager counts\n"
+        "  `/git` — Git repositories status\n"
+        "  `/notes` — Quick notes manager\n"
+        "  `/calc <expr>` — Inline calculator\n"
+        "  `/calendar` — Show calendar\n"
+        "  `/backup` — Create config backup\n"
+        "  `/emptytrash` — Empty trash folder\n"
+        "  `/about` — Bot information\n"
+        "  `/cleartemp` — Clear temp files\n"
+        "  `/music` — Open music player\n"
+        "  `/media` — Open media player\n"
+        "  `/youtube` — Open YouTube\n"
+        "  `/steam` — Open Steam\n"
+        "  `/dice` — Roll a dice\n"
+        "  `/coin` — Flip a coin\n"
+        "  `/fortune` — Fortune cookie\n"
         "  `/help` — Show this message\n\n"
         "💡 Buttons cover everything — no need to remember commands!"
     )
@@ -3338,6 +3356,14 @@ def main():
     app.add_handler(CommandHandler("emptytrash", empty_trash))
     app.add_handler(CommandHandler("about", about_command))
     app.add_handler(CommandHandler("cleartemp", clear_temp))
+    # 🎵 Media & Fun
+    app.add_handler(CommandHandler("music", open_music))
+    app.add_handler(CommandHandler("media", open_media))
+    app.add_handler(CommandHandler("youtube", open_youtube))
+    app.add_handler(CommandHandler("steam", open_steam))
+    app.add_handler(CommandHandler("dice", roll_dice))
+    app.add_handler(CommandHandler("coin", flip_coin))
+    app.add_handler(CommandHandler("fortune", fortune_cookie))
     # ⚡ Control
     app.add_handler(CommandHandler("reboot", reboot_command))
     app.add_handler(CommandHandler("shutdown", shutdown_command))
