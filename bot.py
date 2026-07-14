@@ -41,6 +41,7 @@ import time
 import json
 from datetime import datetime
 from pathlib import Path
+import httpx
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton, WebAppInfo
 from telegram.ext import (
@@ -156,6 +157,67 @@ if not BOT_TOKEN:
 # ============ OSBOXES VM LOGIN CREDENTIALS ============
 # Used by /unlock and /login commands
 # Values imported from utils.py: ADMIN_IDS, OSBOXES_USER, OSBOXES_PASS
+
+# ============ LOCAL AGENT RELAY ============
+# The bot polls Telegram on Render, but needs the local Kali VM
+# for desktop commands (screenshot, lock, unlock, etc.).
+# local_agent.py runs on your Kali VM and connects to the
+# Render healthcheck server to pick up and execute commands.
+
+RELAY_PORT = int(os.environ.get("PORT", 8080))
+RELAY_BASE_URL = f"http://localhost:{RELAY_PORT}/agent"
+
+
+async def relay_command(cmd_type: str, args: str = "", poll_timeout: int = 30) -> dict:
+    """
+    Send a command to the local VM desktop agent and wait for the result.
+    Returns dict with keys: output, error, has_file, cmd_id
+    """
+    async with httpx.AsyncClient(timeout=10) as client:
+        try:
+            # Step 1: Queue the command
+            resp = await client.post(
+                f"{RELAY_BASE_URL}/command",
+                json={"type": cmd_type, "args": args},
+            )
+            if resp.status_code != 200:
+                return {"error": f"Relay unavailable (HTTP {resp.status_code})", "output": "", "has_file": False}
+            data = resp.json()
+            if data.get("status") != "queued":
+                return {"error": "Failed to queue command", "output": "", "has_file": False}
+            cmd_id = data["id"]
+
+            # Step 2: Poll for result
+            start = time.time()
+            while time.time() - start < poll_timeout:
+                await asyncio.sleep(1)
+                resp = await client.get(f"{RELAY_BASE_URL}/result/{cmd_id}")
+                if resp.status_code != 200:
+                    continue
+                result = resp.json()
+                if result.get("status") == "ready":
+                    r = result["result"]
+                    output = r.get("output", "")
+                    error = r.get("error")
+                    # Check for file
+                    has_file = False
+                    try:
+                        file_resp = await client.get(f"{RELAY_BASE_URL}/has_file/{cmd_id}")
+                        if file_resp.status_code == 200:
+                            has_file = file_resp.json().get("has_file", False)
+                    except Exception:
+                        pass
+                    return {"output": output, "error": error, "has_file": has_file, "cmd_id": cmd_id}
+                elif result.get("status") == "error":
+                    return {"error": "Command failed on agent", "output": "", "has_file": False}
+
+            return {"error": "Command timed out", "output": "", "has_file": False}
+
+        except httpx.ConnectError:
+            # Relay server not running — likely running locally
+            return {"error": None, "output": "__NO_RELAY__", "has_file": False}
+        except Exception as e:
+            return {"error": str(e), "output": "", "has_file": False}
 
 # ============ SETUP ============
 
@@ -650,40 +712,68 @@ async def screenshot_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     status_msg = await update.effective_message.reply_text("📸 Taking screenshot...")
 
-    screenshot_path = "/tmp/guid_screenshot.png"
-
-    # Try multiple methods
-    methods = [
-        ["import", "-window", "root", screenshot_path],
-        ["scrot", screenshot_path],
-        ["gnome-screenshot", "-f", screenshot_path],
-    ]
-
-    success = False
-    for cmd in methods:
-        if shutil.which(cmd[0]):
-            try:
-                subprocess.run(cmd, timeout=10, capture_output=True)
-                if Path(screenshot_path).exists() and Path(screenshot_path).stat().st_size > 1000:
-                    success = True
-                    break
-            except (subprocess.TimeoutExpired, OSError):
-                continue
-
-    if success:
-        await status_msg.delete()
-        with open(screenshot_path, "rb") as f:
-            await update.effective_message.reply_photo(
-                photo=f,
-                caption=f"📸 Screenshot taken at {datetime.now().strftime('%H:%M:%S')}",
+    # Try the local agent relay first
+    result = await relay_command("screenshot")
+    if result["error"] and result["output"] == "__NO_RELAY__":
+        # No relay running — try local execution fallback
+        screenshot_path = "/tmp/guid_screenshot.png"
+        methods = [
+            ["import", "-window", "root", screenshot_path],
+            ["scrot", screenshot_path],
+            ["gnome-screenshot", "-f", screenshot_path],
+        ]
+        success = False
+        for cmd in methods:
+            if shutil.which(cmd[0]):
+                try:
+                    subprocess.run(cmd, timeout=10, capture_output=True)
+                    if Path(screenshot_path).exists() and Path(screenshot_path).stat().st_size > 1000:
+                        success = True
+                        break
+                except (subprocess.TimeoutExpired, OSError):
+                    continue
+        if success:
+            await status_msg.delete()
+            with open(screenshot_path, "rb") as f:
+                await update.effective_message.reply_photo(
+                    photo=f,
+                    caption=f"📸 Screenshot taken at {datetime.now().strftime('%H:%M:%S')}",
+                )
+            os.remove(screenshot_path)
+        else:
+            await status_msg.edit_text(
+                "❌ Failed to take screenshot.\n"
+                "Make sure a desktop environment is running and you have "
+                "`import` (imagemagick) or `scrot` installed."
             )
-        os.remove(screenshot_path)
-    else:
-        await status_msg.edit_text(
-            "❌ Failed to take screenshot.\n"
-            "Make sure a desktop environment is running and you have "
-            "`import` (imagemagick) or `scrot` installed."
-        )
+        return
+
+    if result["error"]:
+        await status_msg.edit_text(f"❌ Screenshot failed: {result['error']}")
+        return
+
+    # Success — download the screenshot from the relay
+    try:
+        if result.get("has_file"):
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(f"{RELAY_BASE_URL}/download/{result['cmd_id']}")
+                if resp.status_code == 200:
+                    await status_msg.delete()
+                    # Save to temp and send
+                    temp_path = f"/tmp/guid_screenshot_relay_{result['cmd_id']}.png"
+                    with open(temp_path, "wb") as f:
+                        f.write(resp.content)
+                    with open(temp_path, "rb") as f:
+                        await update.effective_message.reply_photo(
+                            photo=f,
+                            caption=f"📸 Screenshot via local agent @ {datetime.now().strftime('%H:%M:%S')}",
+                        )
+                    os.remove(temp_path)
+                    return
+        # No file but succeeded — show text output
+        await status_msg.edit_text(f"✅ Screenshot taken: {result['output']}")
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Failed to download screenshot: {e}")
 
 async def sysinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show system information."""
@@ -1009,61 +1099,42 @@ async def lock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("⛔ Unauthorized.")
         return
 
-    if not shutil.which("i3lock"):
-        # Fallback: try xfce4-screensaver
-        if shutil.which("xfce4-screensaver-command"):
-            await run_shell("xfce4-screensaver-command -l 2>/dev/null")
-            await update.effective_message.reply_text("🔒 Lock attempted (xfce4-screensaver). It may not show properly.")
-            return
-        await update.effective_message.reply_text("❌ No lock screen tool found. Run: `sudo apt install i3lock`", parse_mode="Markdown")
-        return
-
     status_msg = await update.effective_message.reply_text("🔒 Locking screen...")
 
-    try:
-        # Kill xfce4-screensaver first (it conflicts with i3lock)
-        await run_shell("pkill -9 xfce4-screensaver 2>/dev/null; sleep 0.5; echo 'killed'")
-
-        # Run i3lock in background - it shows a black screen
-        # Type password + Enter to unlock (i3lock uses PAM auth)
-        subprocess.Popen(
-            ["i3lock", "-c", "1a1a2e", "--nofork"],  # Dark purple-blue color
-            env={"DISPLAY": ":0", "HOME": os.environ.get("HOME", "/home/osboxes")},
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        # Note: env only sets DISPLAY+HOME for i3lock to work even without X session env.
-        # i3lock only needs DISPLAY to know which screen to lock.
-
-        await asyncio.sleep(1)
-
-        # Check if i3lock is running
-        locked = await run_shell("pgrep -x i3lock 2>/dev/null || echo 'not running'")
-
-        if "not running" in locked:
-            await status_msg.edit_text(
-                "❌ i3lock failed to start. Trying fallback...\n"
-                "Try manually: `i3lock -c 000000`",
-                parse_mode="Markdown"
-            )
-            # Fallback: dm-tool
-            await run_shell("dm-tool lock 2>/dev/null")
+    # Try local agent relay first
+    result = await relay_command("lock")
+    if result["error"] and result["output"] == "__NO_RELAY__":
+        # Fallback: run locally
+        if not shutil.which("i3lock"):
+            if shutil.which("xfce4-screensaver-command"):
+                await run_shell("xfce4-screensaver-command -l 2>/dev/null")
+                await status_msg.edit_text("🔒 Lock attempted (xfce4-screensaver). It may not show properly.")
+                return
+            await status_msg.edit_text("❌ No lock screen tool found. Run: `sudo apt install i3lock`", parse_mode="Markdown")
             return
+        try:
+            await run_shell("pkill -9 xfce4-screensaver 2>/dev/null; sleep 0.5; echo 'killed'")
+            subprocess.Popen(
+                ["i3lock", "-c", "1a1a2e", "--nofork"],
+                env={"DISPLAY": ":0", "HOME": os.environ.get("HOME", "/home/osboxes")},
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            await asyncio.sleep(1)
+            locked = await run_shell("pgrep -x i3lock 2>/dev/null || echo 'not running'")
+            if "not running" in locked:
+                await status_msg.edit_text("❌ i3lock failed to start. Try: `i3lock -c 000000`", parse_mode="Markdown")
+                await run_shell("dm-tool lock 2>/dev/null")
+                return
+            await status_msg.edit_text("🔒 *Screen Locked!* 🔒\n━━━━━━━━━━━━━━━━\nScreen is now locked with i3lock.\n\n🔓 *To unlock:* Tap the *🔓 Unlock* button", parse_mode="Markdown")
+        except Exception as e:
+            await status_msg.edit_text(f"❌ Failed to lock: {e}")
+        return
 
-        await status_msg.edit_text(
-            "🔒 *Screen Locked!* 🔒\n"
-            "━━━━━━━━━━━━━━━━\n"
-            "Screen is now locked with i3lock.\n\n"
-            "🔓 *To unlock:*\n"
-            "Tap the *🔓 Unlock* button below and I'll\n"
-            "type the password and press Enter for you!\n\n"
-            "💡 The screen shows a dark background now.\n"
-            "Typing + Enter = unlocks automatically via i3lock.",
-            parse_mode="Markdown"
-        )
-
-    except Exception as e:
-        await status_msg.edit_text(f"❌ Failed to lock: {e}")
+    if result["error"]:
+        await status_msg.edit_text(f"❌ Lock failed: {result['error']}")
+        return
+    await status_msg.edit_text(f"{result['output']}")
 
 async def notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show a desktop notification on the machine."""
@@ -2371,11 +2442,15 @@ async def unlock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("⛔ Unauthorized.")
         return
 
-    if not shutil.which("xdotool"):
-        await update.effective_message.reply_text("❌ xdotool not installed. Run: `sudo apt install xdotool`", parse_mode="Markdown")
-        return
-
-    # Check if screen is actually locked
+    # Try local agent relay first
+    status_msg = await update.effective_message.reply_text("🔓 Unlocking...")
+    result = await relay_command("unlock")
+    if result["error"] and result["output"] == "__NO_RELAY__":
+        # Fallback: run locally
+        if not shutil.which("xdotool"):
+            await status_msg.edit_text("❌ xdotool not installed. Run: `sudo apt install xdotool`", parse_mode="Markdown")
+            return
+        # Check if screen is actually locked
     locked_check = await run_shell("pgrep -x i3lock 2>/dev/null || pgrep -x xfce4-screensaver 2>/dev/null || echo 'not_locked'")
     if "not_locked" in locked_check:
         await update.effective_message.reply_text(

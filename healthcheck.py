@@ -550,6 +550,119 @@ def debug():
     return jsonify(info)
 
 
+# ============ COMMAND RELAY (Local VM Agent Bridge) ============
+# The bot on Render stores desktop commands here.
+# The local_agent.py script (running on your Kali VM) polls this
+# endpoint, executes commands, and posts results back.
+# This allows the cloud bot to control your local desktop.
+
+_command_queue = []  # List of pending commands
+_result_store = {}   # Dict of completed results
+
+@app.route("/agent/command", methods=["POST", "GET"])
+def agent_command():
+    """
+    POST: Bot enqueues a command for the local agent.
+    GET:  Local agent polls for the next command.
+    """
+    from flask import request
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        cmd_id = str(int(time.time() * 1000)) + "_" + str(len(_command_queue))
+        entry = {
+            "id": cmd_id,
+            "type": data.get("type", "shell"),
+            "args": data.get("args", ""),
+            "chat_id": data.get("chat_id", ""),
+            "status": "pending",
+        }
+        _command_queue.append(entry)
+        return jsonify({"status": "queued", "id": cmd_id})
+    
+    # GET: return next pending command
+    for cmd in _command_queue:
+        if cmd["status"] == "pending":
+            cmd["status"] = "running"
+            return jsonify(cmd)
+    return jsonify({"status": "empty"})
+
+
+@app.route("/agent/result", methods=["POST"])
+def agent_result():
+    """Local agent posts command results here."""
+    from flask import request
+    data = request.get_json(silent=True) or {}
+    cmd_id = data.get("id", "")
+    output = data.get("output", "")
+    error = data.get("error", None)
+    
+    if cmd_id:
+        _result_store[cmd_id] = {
+            "output": output,
+            "error": error,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        # Mark command as completed
+        for cmd in _command_queue:
+            if cmd["id"] == cmd_id:
+                cmd["status"] = "completed"
+                break
+    return jsonify({"status": "ok"})
+
+
+@app.route("/agent/result/<cmd_id>")
+def agent_get_result(cmd_id):
+    """Bot checks if a command result is ready."""
+    result = _result_store.get(cmd_id)
+    if result:
+        return jsonify({"status": "ready", "result": result})
+    return jsonify({"status": "pending"})
+
+
+# File storage for command results (screenshots, uploads)
+_RESULT_FILES = {}
+
+
+@app.route("/agent/upload/<cmd_id>", methods=["POST"])
+def agent_upload(cmd_id):
+    """Local agent uploads a file (screenshot, etc.) for a completed command."""
+    from flask import request
+    if "file" not in request.files:
+        return jsonify({"status": "error", "error": "No file provided"}), 400
+    file = request.files["file"]
+    filename = file.filename or f"{cmd_id}.bin"
+    file_data = file.read()
+    _RESULT_FILES[cmd_id] = {
+        "filename": filename,
+        "data": file_data,
+        "mimetype": file.content_type or "application/octet-stream",
+    }
+    return jsonify({"status": "ok", "filename": filename, "size": len(file_data)})
+
+
+@app.route("/agent/download/<cmd_id>")
+def agent_download(cmd_id):
+    """Bot downloads a file result from a completed command."""
+    from flask import send_file
+    import io
+    file_info = _RESULT_FILES.get(cmd_id)
+    if not file_info:
+        return jsonify({"status": "error", "error": "File not found"}), 404
+    return send_file(
+        io.BytesIO(file_info["data"]),
+        mimetype=file_info["mimetype"],
+        as_attachment=True,
+        download_name=file_info["filename"],
+    )
+
+
+@app.route("/agent/has_file/<cmd_id>")
+def agent_has_file(cmd_id):
+    """Bot checks if a file is ready for download."""
+    has_file = cmd_id in _RESULT_FILES
+    return jsonify({"status": "ok", "has_file": has_file})
+
+
 @app.after_request
 def add_no_cache(resp):
     """Prevent browsers from caching JSON responses (dashboard refreshes every 30s)."""
