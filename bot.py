@@ -243,202 +243,28 @@ async def relay_command(cmd_type: str, args: str = "", poll_timeout: int = 5) ->
 # ============ REPLY KEYBOARD (Buttons Below Chat) ============
 
 def build_reply_keyboard():
-    """Expanded 90+ button keyboard organized by sorted categories."""
+    """Clean 10-button keyboard for remote control."""
     keyboard = [
-        # 🚀 Power Tools
-        ["💻 Open Terminal", "🌍 Open Firefox", "📸 Screenshot"],
-        ["🎬 Record Screen", "⏹️ Stop Record", "🔪 Kill Top CPU"],
-        ["🧹 Clear Cache", "🔐 VPN Toggle", "🧦 SOCKS5"],
-
-        # 💻 System
-        ["💻 Shell Command", "⚙️ Services", "🪟 Open Apps"],
-        ["🌡️ CPU Temp", "📋 Clipboard", "📦 Packages"],
-        ["🧑‍💻 Who's Online", "🔧 Fix Network", "🔄 Update System"],
-
-        # 📊 Monitoring
-        ["📋 Processes", "📊 System Info", "🌡️ GPU Info"],
-        ["🌐 LAN IP", "📡 WiFi", "📡 Speed Test"],
-        ["👤 Whoami", "⏱️ Uptime", "📜 History"],
-
-        # 🖥️ Desktop
-        ["🔒 Lock", "🔓 Unlock", "🔑 GPG Keys"],
-        ["🔔 Notify", "⌨️ Type Text", "🔘 Press Key"],
-
-        # 📊 Dashboard
-        ["📊 Dashboard"],
-
-        # 🔊 Sound & Media
+        ["📸 Screenshot", "🔒 Lock/Unlock"],
         ["🔊 Vol Up", "🔊 Vol Down", "🔇 Mute"],
-        ["🎵 Music", "🎬 Media", "🖼️ Images"],
-        ["📺 YouTube", "🎮 Steam", "🎧 Podcasts"],
-
-        # 🖱️ Mouse
-        ["🖱️ Mouse", "🖱️ Left Click", "🖱️ Right Click"],
-        ["📜 Scroll Up", "📜 Scroll Down", "📍 Mouse Pos"],
-
-        # 📁 Files
-        ["📁 Home", "📂 Downloads", "📄 Documents"],
-        ["🖼️ Screenshots", "🎬 Videos", "📤 Upload"],
-        ["📥 Download", "💾 Backup", "🗑️ Empty Trash"],
-
-        # 🌐 Remote & Network
-        ["🌐 Web VNC", "🖥️ VNC Start", "🖥️ VNC Status"],
-        ["🖥️ VNC Stop", "🔄 RustDesk", "🌍 Open URL"],
-        ["🖧 Share Folder", "🔄 Restart Network", "📡 Speed Test"],
-
-        # 🛡️ Security
-        ["🛡️ Firewall", "🔐 SSH Keys", "🔐 Login Info"],
-        ["🧹 Secure Delete", "🔍 Port Scan", "🔑 Keychain"],
-
-        # 🛠️ Developer
-        ["🐍 Python", "🐳 Docker", "📝 VS Code"],
-        ["🐙 Git Status", "🛠️ Build", "🧪 Run Tests"],
-        ["🧮 Calculator", "📝 Notes", "📅 Calendar"],
-
-        # 🎮 Fun
-        ["🎲 Roll Dice", "🪙 Flip Coin", "🔮 Fortune"],
-        ["🎱 8-Ball", "👾 Matrix", "🐱 Cat Facts"],
-
-        # ⚡ Control
-        ["⏹️ Shutdown", "📖 Help", "🔄 Reboot"],
-        ["🌐 Web Panel", "📞 Share Phone", "🔍 About"],
-        ["🔌 Power Off", "💻 Lock Now", "🧹 Clear Temp"],
-
-        # ⚙️ Display
-        ["🖥️ Screen Res", "💡 Brightness", "🌙 Night Mode"],
-        ["🎨 Theme", "📷 Camera", "📞 Share Phone"],
+        ["💻 Shell", "📊 System Info"],
+        ["📋 Processes", "📊 Dashboard"],
+        ["📖 Help"],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-# Map button text to command handler
+# Map button text to command handler (10 essential commands)
 BUTTON_COMMANDS = {
-    "💻 Open Terminal": "term",
-    "🌍 Open Firefox": "firefox",
     "📸 Screenshot": "screenshot",
-    "🎬 Record Screen": "record",
-    "⏹️ Stop Record": "stop_record",
-    "🔪 Kill Top CPU": "killcpu",
-    "🧹 Clear Cache": "clearcache",
-    "🔐 VPN Toggle": "vpn",
-    "🧦 SOCKS5": "socks5",
-    "🌡️ CPU Temp": "temp",
-    "🔑 GPG Keys": "gpg",
-    "🔒 Lock": "lock",
-    "🔓 Unlock": "unlock",
+    "🔒 Lock/Unlock": "lock_unlock",
     "🔊 Vol Up": "sound up",
     "🔊 Vol Down": "sound down",
     "🔇 Mute": "sound mute",
-    "🌐 Web VNC": "webvnc",
-    "🖥️ VNC Status": "vnc",
-    "📊 System Info": "sysinfo",
-    "🧠 Memory": "memory",
-    "📖 Help": "help",
-    "🔄 Reboot": "reboot",
-    # === Backward compat: old button labels ===
-    "📋 Processes": "ps",
-    "📊 Sysinfo": "sysinfo",
-    "👤 Whoami": "whoami",
-    "📜 Down": "scroll down",
-    "📜 Up": "scroll up",
-    "🖱️ Right": "click right",
-    "🖱️ Left": "click left",
-    "🔄 RustDesk": "rustdesk",
-    "📱 Share #": "phone",
-    "🔔 Notify": "notify",
     "💻 Shell": "shell",
-    "💾 Disk": "disk",
-    "🌐 IP": "ip",
-    "📡 WiFi": "wifi",
-    "⏹️ Shutdown": "shutdown",
-    "📜 History": "cmdhistory",
-    "⏱️ Uptime": "uptime",
-    "📱 Share Phone": "phone",
-    "📞 Share Phone": "phone",
-    "🖱️ Mouse": "mouse",
-    "🌐 Web Panel": "webpanel",
+    "📊 System Info": "sysinfo",
+    "📋 Processes": "ps",
+    "📖 Help": "help",
     "📊 Dashboard": "dashboard",
-    # ===== EXTRA COMMANDS (60+) =====
-    # 💻 System
-    "💻 Shell Command": "shell",
-    "⚙️ Services": "services",
-    "🪟 Open Apps": "apps",
-    "🌡️ CPU Temp": "temp",
-    "📋 Clipboard": "clipboard",
-    "📦 Packages": "packages",
-    "🧑‍💻 Who's Online": "whoson",
-    "🔧 Fix Network": "fixnet",
-    "🔄 Update System": "updatesys",
-    # 📊 Monitoring
-    "🌡️ GPU Info": "gputemp",
-    "🌐 LAN IP": "ip",
-    "📡 Speed Test": "speedtest",
-    # 🖥️ Desktop
-    "⌨️ Type Text": "type",
-    "🔘 Press Key": "key",
-    "🔐 Login Info": "login",
-    # 🔊 Sound & Media
-    "🎵 Music": "music",
-    "🎬 Media": "media",
-    "🖼️ Images": "images",
-    "📺 YouTube": "youtube",
-    "🎮 Steam": "steam",
-    "🎧 Podcasts": "podcast",
-    # 🖱️ Mouse
-    "🖱️ Left Click": "click left",
-    "🖱️ Right Click": "click right",
-    "📜 Scroll Up": "scroll up",
-    "📜 Scroll Down": "scroll down",
-    "📍 Mouse Pos": "mpos",
-    # 📁 Files
-    "📁 Home": "home",
-    "📂 Downloads": "downloads",
-    "📄 Documents": "docs",
-    "🖼️ Screenshots": "screenshots",
-    "🎬 Videos": "videos",
-    "📤 Upload": "upload",
-    "📥 Download": "download_prompt",
-    "💾 Backup": "backup",
-    "🗑️ Empty Trash": "emptytrash",
-    # 🌐 Remote
-    "🖥️ VNC Start": "vnc start",
-    "🖥️ VNC Stop": "vnc stop",
-    "🌍 Open URL": "web",
-    "🖧 Share Folder": "share",
-    "🔄 Restart Network": "restartnet",
-    # 🛡️ Security
-    "🛡️ Firewall": "firewall",
-    "🔐 SSH Keys": "sshkeys",
-    "🧹 Secure Delete": "shred",
-    "🔍 Port Scan": "portscan",
-    "🔑 Keychain": "keychain",
-    # 🛠️ Developer
-    "🐍 Python": "python",
-    "🐳 Docker": "docker",
-    "📝 VS Code": "vscode",
-    "🐙 Git Status": "git",
-    "🛠️ Build": "build",
-    "🧪 Run Tests": "tests",
-    "🧮 Calculator": "calc",
-    "📝 Notes": "notes",
-    "📅 Calendar": "calendar",
-    # 🎮 Fun
-    "🎲 Roll Dice": "dice",
-    "🪙 Flip Coin": "coin",
-    "🔮 Fortune": "fortune",
-    "🎱 8-Ball": "8ball",
-    "👾 Matrix": "matrix",
-    "🐱 Cat Facts": "catfacts",
-    # ⚡ Control
-    "🔍 About": "about",
-    "🔌 Power Off": "poweroff",
-    "💻 Lock Now": "lock",
-    "🧹 Clear Temp": "cleartemp",
-    # ⚙️ Display
-    "🖥️ Screen Res": "screenres",
-    "💡 Brightness": "brightness",
-    "🌙 Night Mode": "nightmode",
-    "🎨 Theme": "theme",
-    "📷 Camera": "camera",
 }
 
 # ============ COMMAND HANDLERS ============
@@ -528,6 +354,7 @@ async def button_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         "whoson": whos_online,
         "lock": lock_command,
         "unlock": unlock_command,
+        "lock_unlock": lock_unlock_command,
         "sysinfo": sysinfo_command,
         "memory": memory_command,
         "disk": disk_command,
@@ -1127,8 +954,21 @@ async def lock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await run_shell("dm-tool lock 2>/dev/null")
                 return
             await status_msg.edit_text("🔒 *Screen Locked!* 🔒\n━━━━━━━━━━━━━━━━\nScreen is now locked with i3lock.\n\n🔓 *To unlock:* Tap the *🔓 Unlock* button", parse_mode="Markdown")
-        except Exception as e:
-            await status_msg.edit_text(f"❌ Failed to lock: {e}")
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Failed to lock: {e}")
+
+
+async def lock_unlock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Toggle lock/unlock — locks if unlocked, unlocks if locked."""
+    if not is_authorized(update.effective_user.id):
+        await update.effective_message.reply_text("⛔ Unauthorized.")
+        return
+    # Check current lock state
+    locked = await run_shell("pgrep -x i3lock 2>/dev/null || echo 'unlocked'")
+    if "unlocked" in locked:
+        await lock_command(update, context)
+    else:
+        await unlock_command(update, context)
         return
 
     if result["error"]:
