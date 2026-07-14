@@ -1,0 +1,38 @@
+# ==============================================================
+# guid_erbot - Git Ignore Rules
+# ==============================================================
+
+# Environment & Secrets
+.env
+*.env.local
+*.env.production
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+venv/
+.venv/
+*.so
+
+# Data & State
+data/
+*.log
+/tmp/
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Deployment temp files
+fix_*.py

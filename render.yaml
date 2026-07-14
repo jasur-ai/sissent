@@ -1,0 +1,59 @@
+# ==============================================================
+# guid_erbot - Render Blueprint Deployment Configuration
+# ==============================================================
+# Deploy to Render:
+#   1. Push this repo to GitHub
+#   2. In Render Dashboard → Blueprint → Connect repo
+#   3. Set BOT_TOKEN as Environment Variable
+#   4. Deploy!
+# ==============================================================
+
+services:
+  # ===================== TELEGRAM BOT (Background Worker) =====================
+  - type: worker
+    name: guid-erbot-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: ./startup.sh
+    runtime: python3.11
+    plan: free
+    autoDeploy: true
+    envVars:
+      - key: BOT_TOKEN
+        sync: false  # User must set this manually
+        required: true
+      - key: ADMIN_IDS
+        value: "8004724563"
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: RENDER
+        value: "true"
+
+  # ===================== HEALTH CHECK (Web Service - for Uptime Runner) =====================
+  # This lightweight HTTP server keeps the bot alive on Render's free tier.
+  # Configure UptimeRobot to ping the /health endpoint every 10 minutes.
+  - type: web
+    name: guid-erbot-health
+    env: python
+    buildCommand: pip install flask
+    startCommand: python3 healthcheck.py
+    runtime: python3.11
+    plan: free
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: "8080"
+
+  # ===================== WEB PANEL (Web Service, optional) =====================
+  # Uncomment this if you want the full web control panel:
+  # - type: web
+  #   name: guid-erbot-web
+  #   env: python
+  #   buildCommand: pip install -r requirements.txt
+  #   startCommand: gunicorn web_panel:app --bind 0.0.0.0:$PORT
+  #   runtime: python3.11
+  #   plan: free
+  #   autoDeploy: true
+  #   envVars:
+  #     - key: PORT
+  #       value: "5000"

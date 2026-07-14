@@ -1,0 +1,16 @@
+[Unit]
+Description=guid_erbot - Telegram Bot for Kali Remote Control
+After=network.target graphical-session.target
+
+[Service]
+Type=simple
+User=osboxes
+WorkingDirectory=/home/osboxes/guid_erbot
+ExecStart=/usr/bin/python3 /home/osboxes/guid_erbot/bot.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
