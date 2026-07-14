@@ -168,7 +168,7 @@ RELAY_PORT = int(os.environ.get("PORT", 8080))
 RELAY_BASE_URL = f"http://localhost:{RELAY_PORT}/agent"
 
 
-async def relay_command(cmd_type: str, args: str = "", poll_timeout: int = 30) -> dict:
+async def relay_command(cmd_type: str, args: str = "", poll_timeout: int = 5) -> dict:
     """
     Send a command to the local VM desktop agent and wait for the result.
     Returns dict with keys: output, error, has_file, cmd_id
